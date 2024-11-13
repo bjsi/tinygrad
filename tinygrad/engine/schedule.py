@@ -45,7 +45,8 @@ class ScheduleContext:
   assigns: Set[UOp] = field(default_factory=set)                   # this holds all the UOps.BUFFERs we ASSIGN to in this schedule
   lazybufs: Dict[Buffer, LazyBuffer] = field(default_factory=dict) # this is a lookup for the LazyBuffers we need to mark as realized
 
-def to_uop(buf:LazyBuffer, ctx:ScheduleContext, children, allbufs, double_reduces, cache:Dict[LazyBuffer, UOp]) -> UOp:
+def to_uop(buf:LazyBuffer, ctx:ScheduleContext, children:DefaultDict[LazyBuffer, Dict[LazyBuffer, None]], allbufs:Dict[LazyBuffer, None],
+           double_reduces:Dict[LazyBuffer, None], cache:Dict[LazyBuffer, UOp]) -> UOp:
   if (r:=cache.get(buf)) is not None: return r
   if buf is not buf.base:
     cache[buf] = ret = to_uop(buf.base, ctx, children, allbufs, double_reduces, cache).view(buf.st)
@@ -150,7 +151,7 @@ view_left = merge_views+PatternMatcher([
 view_right = merge_views+PatternMatcher([
   # ASSIGN can override st
   (UPat(Ops.STORE, src=(UPat.var("b"), UPat.var("v"), UPat(Ops.ASSIGN, name="a"))),
-   lambda a,b,v: UOp.store(b, (a.buf_uop+v.st).to_uop(), a.replace(arg=())) if a.arg else None),
+   lambda a,b,v: UOp.store(b, (a.arg[0]+v.st).to_uop(), a.replace(arg=())) if a.arg else None),
   # non contiguous VIEW on a reduce creates a new VIEW
   (UPat(Ops.REDUCE_AXIS, src=UPat.var("src"), name="r").view(name="v"), lambda v,r,src: None if v.st.contiguous else swizzle_r(r, src, v.st)),
   # push a VIEW down to STORE, through a reduce (ONLY reshapes)
