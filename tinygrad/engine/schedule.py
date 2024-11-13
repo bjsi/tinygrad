@@ -149,8 +149,8 @@ view_left = merge_views+PatternMatcher([
 # push VIEW to stores
 view_right = merge_views+PatternMatcher([
   # ASSIGN can override st
-  (UPat(Ops.STORE, src=(UPat.var("b"), UPat.var("st"), UPat(Ops.ASSIGN, name="a"))),
-   lambda a,b,st: UOp.store(b, (a.arg[0]+st.arg).to_uop(), a.replace(arg=())) if a.arg else None),
+  (UPat(Ops.STORE, src=(UPat.var("b"), UPat.var("v"), UPat(Ops.ASSIGN, name="a"))),
+   lambda a,b,v: UOp.store(b, (a.buf_uop+v.st).to_uop(), a.replace(arg=())) if a.arg else None),
   # non contiguous VIEW on a reduce creates a new VIEW
   (UPat(Ops.REDUCE_AXIS, src=UPat.var("src"), name="r").view(name="v"), lambda v,r,src: None if v.st.contiguous else swizzle_r(r, src, v.st)),
   # push a VIEW down to STORE, through a reduce (ONLY reshapes)
