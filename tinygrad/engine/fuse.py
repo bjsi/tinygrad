@@ -24,15 +24,15 @@ def _recursive_group(tr:LazyBuffer, st:ShapeTracker, r:LazyBuffer, children:Defa
     if len(st_childs:=dedup(s.st for s in tr_next.srcs if s.base == tr)) > 1: return group.setdefault(r)
     _recursive_group(tr_next, st+st_childs[0], r, children, realizes, reduce_for_op, group, cache)
 
-def _get_isolated_children(r:LazyBuffer, reduce_for_op:Dict[LazyBuffer, UOp], children:DefaultDict[LazyBuffer, Dict[LazyBuffer, None]],\
-    realizes:Dict[LazyBuffer, None], group:Dict[LazyBuffer, None]) -> Dict[LazyBuffer, None]:
+def _get_isolated_children(r:LazyBuffer, reduce_for_op:Dict[LazyBuffer, UOp], children:DefaultDict[LazyBuffer, Dict[LazyBuffer, None]],
+                           realizes:Dict[LazyBuffer, None], group:Dict[LazyBuffer, None]) -> Dict[LazyBuffer, None]:
   rc_parents, cache = deque(group), set()
   while rc_parents:
     if (p:=rc_parents.pop()) in cache: continue
     cache.add(p)
     # max one reduceop per kernel
     if p.op is Ops.REDUCE_AXIS: return {}
-    rc_parents.extend(x.base for x in p.srcs if x.base.realized is None and x.base is not r)
+    rc_parents.extend(x.base for x in p.srcs if not x.base.is_realized() and x.base is not r)
   # search descendants of the reduceop that can cleanly group
   descendants: Dict[LazyBuffer, None] = {}
   for tr in group: _recursive_group(tr, tr.st, tr, children, realizes, reduce_for_op, descendants, cache={})
@@ -80,7 +80,7 @@ def get_realizes(children:DefaultDict[LazyBuffer, Dict[LazyBuffer, None]], allbu
           if not st.contiguous or tr_next.op is Ops.REDUCE_AXIS: break
           tr = tr_next
         # don't cast to higher size before store (tr cannot be realized if forced_realize)
-        if tr.op is Ops.CAST and tr.arg.itemsize > tr.srcs[0].dtype.itemsize:
+        if tr.op is Ops.CAST and tr.dtype.itemsize > tr.srcs[0].dtype.itemsize:
           tr = tr.srcs[0].base
       group = {tr: None}
       realizes[tr] = None
