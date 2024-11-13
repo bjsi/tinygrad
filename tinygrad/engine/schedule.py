@@ -225,7 +225,8 @@ PROCESS_REPLAY_CAPTURE: List[Tuple[Tuple, UOp]] = []
 if getenv("RUN_PROCESS_REPLAY"):
   @atexit.register
   def save_process_replay():
-    for x,ret in PROCESS_REPLAY_CAPTURE: diskcache_put("schedule_process_replay", str(x[0].key), (x, {}, ret))
+    from test.external.process_replay.helpers import get_process_replay_ctx
+    for x,ret in PROCESS_REPLAY_CAPTURE: diskcache_put("schedule_process_replay", str(x[0].key), (x, *get_process_replay_ctx(), ret))
 
 # **** Schedule creation and BFS toposort
 
