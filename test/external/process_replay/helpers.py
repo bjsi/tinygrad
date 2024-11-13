@@ -9,8 +9,7 @@ class ProcessReplayContext:
   head_sha: str
   run_id: Optional[int]
 def get_process_replay_ctx() -> Tuple[ProcessReplayContext, Dict]:
-  stack = filter(lambda x: "tinygrad" in x.filename and not any(n in x.filename for n in ["engine/schedule.py", "engine/realize.py", \
-      "codegen/kernel.py", "unittest"]), traceback.extract_stack()[:-1])
+  stack = traceback.extract_stack()[:-1]
   loc = "\n".join(traceback.format_list(stack))
   try: head_sha = subprocess.check_output(["git", "rev-parse", "HEAD"]).strip().decode()
   except Exception: head_sha = ""
