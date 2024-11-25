@@ -2,17 +2,141 @@ import math
 import os
 from typing import List, Optional, Tuple
 from tinygrad.dtype import dtypes
+from tinygrad.engine import jit
 from tinygrad.tensor import Tensor
 
-def mix(word_list: List[Tensor], data: Tensor):
-  def rotr(x: Tensor, n: int) -> Tensor: return ((x << (32 - n)) | (x >> n))
+def rotr(x: Tensor, n: int) -> Tensor: return ((x << (32 - n)) | (x >> n))
+
+def mix_1(word_list: List[Tensor], data: Tensor):
   for i, (a,b,c,d) in enumerate([(0,4,8,12), (1,5,9,13), (2,6,10,14), (3,7,11,15), (0,5,10,15), (1,6,11,12), (2,7,8,13), (3,4,9,14)]):
     mx, my = data[i * 2], data[i * 2 + 1]
     for m in (mx, my):
-      word_list[a] = (word_list[a] + word_list[b] + m).realize()
-      word_list[d] = rotr(word_list[d] ^ word_list[a], 16 if m is mx else 8).realize()
-      word_list[c] = (word_list[c] + word_list[d]).realize()
-      word_list[b] = rotr(word_list[b] ^ word_list[c], 12 if m is mx else 7).realize()
+      word_list[a] = (word_list[a] + word_list[b] + m)
+      word_list[d] = rotr(word_list[d] ^ word_list[a], 16 if m is mx else 8)
+      word_list[c] = (word_list[c] + word_list[d])
+      word_list[b] = rotr(word_list[b] ^ word_list[c], 12 if m is mx else 7)
+    
+def mix_2(states: Tensor, data: Tensor):
+  for i, (a,b,c,d) in enumerate([(0,4,8,12), (1,5,9,13), (2,6,10,14), (3,7,11,15), (0,5,10,15), (1,6,11,12), (2,7,8,13), (3,4,9,14)]):
+    mx, my = data[i * 2], data[i * 2 + 1]
+    for m in (mx, my):
+      states[a] = (states[a] + states[b] + m)
+      states[d] = rotr(states[d] ^ states[a], 16 if m is mx else 8)
+      states[c] = (states[c] + states[d])
+      states[b] = rotr(states[b] ^ states[c], 12 if m is mx else 7)
+
+@jit
+def mix_3(states: Tensor, data: Tensor):
+  # round 0
+  mx, my = data[0], data[1]
+  t0 = states[0] + states[4] + mx
+  t12 = rotr(states[12] ^ t0, 16)
+  t8 = states[8] + t12
+  t4 = rotr(states[4] ^ t8, 12)
+  t0 = t0 + t4 + my
+  t12 = rotr(t12 ^ t0, 8)
+  t8 = t8 + t12
+  t4 = rotr(t4 ^ t8, 7)
+
+  # round 1
+  mx, my = data[2], data[3]
+  t1 = states[1] + states[5] + mx
+  t13 = rotr(states[13] ^ t1, 16)
+  t9 = states[9] + t13
+  t5 = rotr(states[5] ^ t9, 12)
+  t1 = t1 + t5 + my
+  t13 = rotr(t13 ^ t1, 8)
+  t9 = t9 + t13
+  t5 = rotr(t5 ^ t9, 7)
+
+  # round 2
+  mx, my = data[4], data[5]
+  t2 = states[2] + states[6] + mx
+  t14 = rotr(states[14] ^ t2, 16)
+  t10 = states[10] + t14
+  t6 = rotr(states[6] ^ t10, 12)
+  t2 = t2 + t6 + my
+  t14 = rotr(t14 ^ t2, 8)
+  t10 = t10 + t14
+  t6 = rotr(t6 ^ t10, 7)
+
+  # round 3
+  mx, my = data[6], data[7]
+  t3 = states[3] + states[7] + mx
+  t15 = rotr(states[15] ^ t3, 16)
+  t11 = states[11] + t15
+  t7 = rotr(states[7] ^ t11, 12)
+  t3 = t3 + t7 + my
+  t15 = rotr(t15 ^ t3, 8)
+  t11 = t11 + t15
+  t7 = rotr(t7 ^ t11, 7)
+
+  # round 4
+  mx, my = data[8], data[9]
+  u0 = t0 + t5 + mx
+  u15 = rotr(t15 ^ u0, 16)
+  u10 = t10 + u15
+  u5 = rotr(t5 ^ u10, 12)
+  u0 = u0 + u5 + my
+  u15 = rotr(u15 ^ u0, 8)
+  u10 = u10 + u15
+  u5 = rotr(u5 ^ u10, 7)
+
+  # round 5
+  mx, my = data[10], data[11]
+  u1 = t1 + t6 + mx
+  u12 = rotr(t12 ^ u1, 16)
+  u11 = t11 + u12
+  u6 = rotr(t6 ^ u11, 12)
+  u1 = u1 + u6 + my
+  u12 = rotr(u12 ^ u1, 8)
+  u11 = u11 + u12
+  u6 = rotr(u6 ^ u11, 7)
+
+  # round 6
+  mx, my = data[12], data[13]
+  u2 = t2 + t7 + mx
+  u13 = rotr(t13 ^ u2, 16)
+  u8 = t8 + u13
+  u7 = rotr(t7 ^ u8, 12)
+  u2 = u2 + u7 + my
+  u13 = rotr(u13 ^ u2, 8)
+  u8 = u8 + u13
+  u7 = rotr(u7 ^ u8, 7)
+
+  # round 7
+  mx, my = data[14], data[15]
+  u3 = t3 + t4 + mx
+  u14 = rotr(t14 ^ u3, 16)
+  u9 = t9 + u14
+  u4 = rotr(t4 ^ u9, 12)
+  u3 = u3 + u4 + my
+  u14 = rotr(u14 ^ u3, 8)
+  u9 = u9 + u14
+  u4 = rotr(u4 ^ u9, 7)
+
+  # Write back final values
+  states[0] = u0
+  states[1] = u1
+  states[2] = u2
+  states[3] = u3
+  states[4] = u4
+  states[5] = u5
+  states[6] = u6
+  states[7] = u7
+  states[8] = u8
+  states[9] = u9
+  states[10] = u10
+  states[11] = u11
+  states[12] = u12
+  states[13] = u13
+  states[14] = u14
+  states[15] = u15
+
+
+
+
+
 
 def compress_chunks(states: Tensor, data: Tensor, chain_vals: Tensor, n_end_blocks: int):
   """Compute over tensors, storing intermediate tensors in lists."""
@@ -23,7 +147,10 @@ def compress_chunks(states: Tensor, data: Tensor, chain_vals: Tensor, n_end_bloc
     word_list = compress_blocks(word_list, data[i], chain_vals[i])
     if i == end_idx: final_chunk_compressed = word_list # save a reference to the end idx block
   # TODO: across all chunks, until the last 
-  for word in word_list: print(word.numpy())
+  for word in word_list:
+    x = word
+    x.realize()
+
   return word_list[:8] if n_end_blocks == 16 else word_list[:-1, :8].cat(states[-1:, end_idx, :8])
 
 def compress_blocks(word_list: List[Tensor], data: Tensor, chain_vals: Tensor) -> List[Tensor]:
@@ -91,21 +218,5 @@ def blake3(tensor: Tensor) -> str:
     chain_vals = compress(chain_vals, tree_compressor, None, None, None, i == tree_levels - 1, True)
     if leftover_chain_val is not None: chain_vals = chain_vals.cat(leftover_chain_val, dim=0)
   return chain_vals[0].flatten().numpy().tobytes()[:32].hex() # TODO: bitcast to uint8 and slice
-
-if __name__ == "__main__":
-  from tinygrad import Device
-  print(f"os.environ['DEBUG'] = {os.environ.get('DEBUG')}")
-  print(f"Device.DEFAULT = {Device.DEFAULT}")
-  kilobyte = 1024
-  megabyte = 1024 * kilobyte
-  gigabyte = 1024 * megabyte
-  t = Tensor.full((kilobyte + 200), fill_value=222, dtype=dtypes.uint8)
-  print(f"Input tensor size: {t.shape[0] * t.dtype.itemsize / megabyte:.5f}MB")
-  import time
-  start = time.monotonic()
-  result = blake3(t)
-  end = time.monotonic()
-  print(f"Hash: {result}")
-  print(f"Time taken: {end - start:.3f} seconds")
 
 
