@@ -1,87 +1,111 @@
 import math
-from typing import Optional, Tuple
+import os
+from typing import List, Optional, Tuple
 from tinygrad.dtype import dtypes
 from tinygrad.tensor import Tensor
 
-def mix(states: Tensor, chunks: Tensor) -> Tensor:
+def mix(word_list: List[Tensor], data: Tensor):
   def rotr(x: Tensor, n: int) -> Tensor: return ((x << (32 - n)) | (x >> n))
   for i, (a,b,c,d) in enumerate([(0,4,8,12), (1,5,9,13), (2,6,10,14), (3,7,11,15), (0,5,10,15), (1,6,11,12), (2,7,8,13), (3,4,9,14)]):
-    mx, my = chunks[:, i * 2], chunks[:, i * 2 + 1]
+    mx, my = data[i * 2], data[i * 2 + 1]
     for m in (mx, my):
-      states[:, a] = states[:, a] + states[:, b] + m
-      states[:, d] = rotr(states[:, d] ^ states[:, a], 16 if m is mx else 8)
-      states[:, c] = states[:, c] + states[:, d]
-      states[:, b] = rotr(states[:, b] ^ states[:, c], 12 if m is mx else 7)
+      word_list[a] = (word_list[a] + word_list[b] + m).realize()
+      word_list[d] = rotr(word_list[d] ^ word_list[a], 16 if m is mx else 8).realize()
+      word_list[c] = (word_list[c] + word_list[d]).realize()
+      word_list[b] = rotr(word_list[b] ^ word_list[c], 12 if m is mx else 7).realize()
 
-def compress_chunks(states: Tensor, chunks: Tensor, chain_vals: Tensor, n_end_blocks: int):
-  for i in range(chunks.shape[1]): # parallel over chunks, sequential over blocks
-    compressed = compress_blocks(states[:, i].contiguous(), chunks[:, i].contiguous(), chain_vals[:, i].contiguous())
-    if i < chunks.shape[1] - 1: states[:, i + 1, :8] = compressed[:, :8] # propagate chain vals to the next block
-  end_idx = n_end_blocks - 1 if chunks.shape[0] == 1 else n_end_blocks # handle partial final chunk
-  return compressed[:, :8] if n_end_blocks == 16 else compressed[:-1, :8].cat(states[-1:, end_idx, :8])
+def compress_chunks(states: Tensor, data: Tensor, chain_vals: Tensor, n_end_blocks: int):
+  """Compute over tensors, storing intermediate tensors in lists."""
+  word_list: List[Tensor] = [states[0, i] for i in range(8)] # init with first 8 words of the first block
+  end_idx = n_end_blocks - 1 if data.shape[2] == 1 else n_end_blocks # to handle partial final chunk
+  for i in range(states.shape[0]): # parallel over words, sequential over blocks
+    word_list = word_list[:8] + [states[i, j] for j in range(8, 16)] # propagate chain vals to the next block
+    word_list = compress_blocks(word_list, data[i], chain_vals[i])
+    if i == end_idx: final_chunk_compressed = word_list # save a reference to the end idx block
+  # TODO: across all chunks, until the last 
+  for word in word_list: print(word.numpy())
+  return word_list[:8] if n_end_blocks == 16 else word_list[:-1, :8].cat(states[-1:, end_idx, :8])
 
-def compress_blocks(states: Tensor, chunks: Tensor, chain_vals: Tensor) -> Tensor:
-  for _ in range(6):
-    mix(states, chunks)
-    chunks.replace(chunks[:, [2, 6, 3, 10, 7, 0, 4, 13, 1, 11, 12, 5, 9, 14, 15, 8]])
-  mix(states, chunks)
-  states[:, :8] = states[:, :8] ^ states[:, 8:]
-  states[:, 8:] = chain_vals[:, :8] ^ states[:, 8:]
-  return states
+def compress_blocks(word_list: List[Tensor], data: Tensor, chain_vals: Tensor) -> List[Tensor]:
+  for _ in range(6): # mix and permute
+    mix(word_list, data)
+    data.replace(data[[2, 6, 3, 10, 7, 0, 4, 13, 1, 11, 12, 5, 9, 14, 15, 8]])
+  mix(word_list, data)
+  for i in range(8):
+    word_list[i] ^= word_list[i + 8]
+    word_list[i + 8] ^= chain_vals[i]
+  return word_list
 
-def bytes_to_chunks(text_bytes: bytes) -> Tuple[Tensor, int, int]:
-  chunks_list = []
-  for chunk_idx in range(0, max(len(text_bytes), 1), 1024):
-    chunk = text_bytes[chunk_idx: chunk_idx + 1024].ljust(1024, b"\x00")
-    for block_idx in range(16):
-      blocks = chunk[block_idx * 64: (block_idx * 64) + 64]
-      chunks_list.append([int.from_bytes(blocks[i: i + 4], "little") for i in range(0, len(blocks), 4)])
-  chunks = Tensor(chunks_list, dtype=dtypes.uint32).reshape(max((len(text_bytes) + 1024 - 1) // 1024, 1), 16, 16)
-  final_chunk_len = len(text_bytes) - ((chunks.shape[0] - 1) * 1024)
-  n_end_blocks = max(1, (final_chunk_len // 64) + (1 if final_chunk_len % 64 else 0))
-  end_block_len = 64 if len(text_bytes) % 64 == 0 and len(text_bytes) else len(text_bytes) % 64
-  return chunks.contiguous(), n_end_blocks, end_block_len  # chunks is [chunks, blocks, words]
+def tensor_to_blake_data(tensor: Tensor) -> Tuple[Tensor, int, int]:
+  data = tensor.flatten().bitcast(dtypes.uint8)
+  unpadded_len = data.numel()
+  data = data.pad(((0, 1024 if data.shape[0] == 0 else (1024 - (data.shape[0] % 1024)) % 1024),), value=0)
+  data = data.bitcast(dtypes.uint32).reshape(16, 16, -1)
+  final_chunk_bytes = unpadded_len - (data.shape[2] - 1) * 1024
+  # TODO: replace both with simple n_bytes in final chunk
+  n_end_blocks = max(1, (final_chunk_bytes // 64) + (1 if final_chunk_bytes % 64 else 0))
+  end_block_len = 64 if unpadded_len % 64 == 0 and unpadded_len else unpadded_len % 64
+  return data, n_end_blocks, end_block_len # data is [blocks, words, chunks]
 
 def pairwise_concatenate(chain_vals: Tensor) -> Tuple[Tensor, Optional[Tensor]]:
   leftover_chunk = chain_vals[-1:] if chain_vals.shape[0] % 2 else None
   return chain_vals[:-1 if leftover_chunk is not None else None].reshape(-1, 16), leftover_chunk
 
 def create_state(iv: Tensor, count: Optional[int], end_block_len: Optional[int], n_end_blocks: Optional[int], flags: Tensor) -> Tensor:
-  n_chunks, n_blocks = iv.shape[0], iv.shape[1]
+  n_blocks, _, n_chunks = iv.shape
   if count is not None:
-    counts = Tensor.arange(count, count + n_chunks, dtype=dtypes.uint32)
-    counts = counts.reshape(n_chunks, 1).expand(n_chunks, n_blocks).reshape(n_chunks, n_blocks, 1)
-    counts = counts.cat(Tensor.zeros(n_chunks, n_blocks, 1, dtype=dtypes.uint32), dim=-1)
+    counts = Tensor.arange(0, n_chunks, dtype=dtypes.uint32).reshape(1, 1, -1).expand(16, 1, -1)
+    counts = counts.cat(Tensor.zeros((n_blocks, 1, n_chunks), dtype=dtypes.uint32), dim=1)
   else:
-    counts = Tensor.zeros(n_chunks, n_blocks, 2, dtype=dtypes.uint32)
-  lengths = Tensor.full((n_chunks, n_blocks, 1), fill_value=64, dtype=dtypes.uint32).contiguous()
-  if end_block_len is not None: lengths[-1, n_end_blocks - 1] = end_block_len
-  return iv.cat(iv[:, :, :4], counts, lengths, flags, dim=-1).contiguous()
+    counts = Tensor.zeros((n_blocks, 2, n_chunks), dtype=dtypes.uint32)
+  lengths = Tensor.full((n_blocks, 1, n_chunks), fill_value=64, dtype=dtypes.uint32).contiguous()
+  # last chunk, last block
+  if end_block_len is not None: lengths[n_end_blocks - 1, 0, -1] = end_block_len
+  return iv.cat(iv[:, :4], counts, lengths, flags, dim=1).contiguous()
 
-def create_flags(chunks: Tensor, n_end_blocks: Optional[int], root: bool, parent: bool) -> Tensor:
+def create_flags(data: Tensor, n_end_blocks: Optional[int], root: bool, parent: bool) -> Tensor:
   end_idx = n_end_blocks - 1 if n_end_blocks is not None else -1
-  flags = Tensor.zeros((chunks.shape[0], chunks.shape[1], 1), dtype=dtypes.uint32).contiguous()
-  flags[:, 0] = flags[:, 0] + 1 # chunk start flag
-  flags[:-1, -1] = flags[:-1, -1] + 2 # chunk end flag
-  flags[-1, end_idx:] = flags[-1, end_idx:] + 2 # chunk end flag
-  if parent: flags[:, :, :] = 4 # parent flag
-  if root: flags[0, end_idx] = flags[0, end_idx] + 8 # root flag
-  return flags
+  flags = Tensor.zeros((16, 1, data.shape[2]), dtype=dtypes.uint32).contiguous()
+  flags[0] += 1 # chunk start flag
+  flags[-1, 0, :-1] = flags[-1, 0, :-1] + 2 # chunk end flag
+  flags[end_idx, 0, -1] = flags[end_idx, 0, -1] + 2 # final chunk end flag accounting for partial chunk
+  if parent: flags[:] = 4 # parent flag
+  if root: flags[end_idx, 0, 0] = flags[end_idx, 0, 0] + 8 # root flag
+  return flags.contiguous()
 
 def compress(data, compressor, count, end_block_len, n_end_blocks, root, parent) -> Tensor:
   IV = [0x6A09E667, 0xBB67AE85, 0x3C6EF372, 0xA54FF53A, 0x510E527F, 0x9B05688C, 0x1F83D9AB, 0x5BE0CD19]
-  iv = Tensor(IV, dtype=dtypes.uint32).expand(data.shape[0], data.shape[1], -1).contiguous()
+  iv = Tensor(IV, dtype=dtypes.uint32).reshape(1, 8, 1).expand(16, 8, data.shape[2]).contiguous()
   states = create_state(iv, count, end_block_len, n_end_blocks, create_flags(data, n_end_blocks, root, parent))
-  return compressor(states, data, iv, n_end_blocks)[:, :8]
+  return compressor(states, data, iv, n_end_blocks)
 
-def blake3(data: Tensor) -> str:
+def blake3(tensor: Tensor) -> str:
   """Hash a Tensor in parallel using the BLAKE3 hashing algorithm."""
-  chunks, n_end_blocks, end_block_len = bytes_to_chunks(data.flatten().numpy().tobytes())
-  chain_vals = compress(chunks, compress_chunks, 0, end_block_len, n_end_blocks, chunks.shape[0] == 1, False)
+  data, n_end_blocks, end_block_len = tensor_to_blake_data(tensor)
+  chain_vals = compress(data, compress_chunks, 0, end_block_len, n_end_blocks, data.shape[0] == 1, False)
   tree_levels = math.ceil(math.log2(max(chain_vals.shape[0], 1)))
-  tree_compressor = lambda states, data, iv, _: compress_blocks(states[:, -1].contiguous(), data, iv[:, 0])
+  # TODO:
+  tree_compressor = lambda states, data, iv, _: compress_blocks(states[:, -1], data, iv[:, 0])
   for i in range(tree_levels): # tree-hash chain value pairs ~halving them in each step
     chain_vals, leftover_chain_val = pairwise_concatenate(chain_vals)
     chain_vals = compress(chain_vals, tree_compressor, None, None, None, i == tree_levels - 1, True)
     if leftover_chain_val is not None: chain_vals = chain_vals.cat(leftover_chain_val, dim=0)
-  return chain_vals[0].flatten().numpy().tobytes()[:32].hex()
+  return chain_vals[0].flatten().numpy().tobytes()[:32].hex() # TODO: bitcast to uint8 and slice
+
+if __name__ == "__main__":
+  from tinygrad import Device
+  print(f"os.environ['DEBUG'] = {os.environ.get('DEBUG')}")
+  print(f"Device.DEFAULT = {Device.DEFAULT}")
+  kilobyte = 1024
+  megabyte = 1024 * kilobyte
+  gigabyte = 1024 * megabyte
+  t = Tensor.full((kilobyte + 200), fill_value=222, dtype=dtypes.uint8)
+  print(f"Input tensor size: {t.shape[0] * t.dtype.itemsize / megabyte:.5f}MB")
+  import time
+  start = time.monotonic()
+  result = blake3(t)
+  end = time.monotonic()
+  print(f"Hash: {result}")
+  print(f"Time taken: {end - start:.3f} seconds")
+
+
