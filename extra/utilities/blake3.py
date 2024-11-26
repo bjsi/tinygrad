@@ -1,7 +1,5 @@
 import math
-import time
 from typing import Optional, Tuple
-from tinygrad.device import Device
 from tinygrad.dtype import dtypes
 from tinygrad.engine import jit
 from tinygrad.tensor import Tensor
@@ -96,55 +94,3 @@ def blake3(tensor: Tensor) -> str:
     chain_vals = compress(chain_vals, tree_compressor, None, None, None, i == tree_levels - 1, True)
     if leftover_chain_val is not None: chain_vals = chain_vals.cat(leftover_chain_val, dim=0)
   return chain_vals[:, 0].flatten().bitcast(dtypes.uint8).data().tobytes()[:32].hex()
-
-if __name__ == "__main__":
-    # Warmup with a small tensor
-    print("Warming up...")
-    warmup_size = 10 * 1024 * 1024  # 10MB
-    for _ in range(3):
-        warmup_data = Tensor.full((warmup_size,), fill_value=0x61, dtype=dtypes.uint8)
-        _ = blake3(warmup_data)
-    print("Warmup complete\n")
-
-    sizes_mb = [100, 500, 1000, 2000, 4000]  # sizes in MB
-    results = []
-
-    for size in sizes_mb:
-        if size > 2000 and Device.DEFAULT == "METAL":
-            print("\nSkipping sizes above 2GB on Metal due to memory constraints")
-            break
-        print(f"\nBenchmarking {size}MB...")
-        bytes_count = 1024 * 1024 * size
-        
-        # Create test data
-        start = time.monotonic()
-        data = Tensor.full((bytes_count,), fill_value=0x61, dtype=dtypes.uint8)
-        setup_time = time.monotonic() - start
-        
-        # Actual timed run
-        start = time.monotonic()
-        hash_result = blake3(data)
-        hash_time = time.monotonic() - start
-        
-        results.append({
-            'size_mb': size,
-            'size_gb': size/1024,
-            'setup_time': setup_time,
-            'hash_time': hash_time,
-            'hash': hash_result
-        })
-        
-        print(f"Size: {size/1024:.2f}GB")
-        print(f"Setup time: {setup_time:.2f}s")
-        print(f"Hash time: {hash_time:.2f}s")
-        print(f"Total time: {(setup_time + hash_time):.2f}s")
-        print(f"Hash: {hash_result}")
-        print("-" * 50)
-
-    # Print summary table
-    print("\nSummary:")
-    print(f"{'Size':>10} | {'Setup Time':>12} | {'Hash Time':>12} | {'Total Time':>12} | {'MB/s':>10}")
-    print("-" * 65)
-    for r in results:
-        mb_per_sec = r['size_mb'] / r['hash_time']
-        print(f"{r['size_mb']:>6}MB | {r['setup_time']:>10.2f}s | {r['hash_time']:>10.2f}s | {r['setup_time'] + r['hash_time']:>10.2f}s | {mb_per_sec:>8.0f}")
