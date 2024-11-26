@@ -97,7 +97,7 @@ def blake3(tensor: Tensor) -> str:
 
 if __name__ == "__main__":
   start = time.monotonic()
-  mb = 1024 * 1024 * 2000
+  mb = 1024 * 1024 * 4000
   data = Tensor.full((mb,), fill_value=0x61, dtype=dtypes.uint8)
   print(blake3(data))
   end = time.monotonic()
