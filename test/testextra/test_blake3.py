@@ -1,5 +1,6 @@
 import unittest
 from extra.utilities.blake3 import blake3
+from tinygrad.dtype import dtypes
 from tinygrad.tensor import Tensor
 
 class TestBLAKE3(unittest.TestCase):
@@ -7,7 +8,7 @@ class TestBLAKE3(unittest.TestCase):
 
   def _test(self, input_len: int, expected_hash: str):
     input_data = bytes(i % 251 for i in range(input_len))
-    actual = blake3(Tensor(input_data))
+    actual = blake3(Tensor(input_data, dtype=dtypes.uint8))
     self.assertEqual(actual, expected_hash)
 
   def test_empty_input(self):
