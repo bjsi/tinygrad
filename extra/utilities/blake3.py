@@ -8,19 +8,11 @@ def mix(states: Tensor, chunks: Tensor) -> Tensor:
   def rotr(x: Tensor, n: int) -> Tensor: return ((x << (32 - n)) | (x >> n))
   for i, (a,b,c,d) in enumerate([(0,4,8,12), (1,5,9,13), (2,6,10,14), (3,7,11,15), (0,5,10,15), (1,6,11,12), (2,7,8,13), (3,4,9,14)]):
     mx, my = chunks[i * 2], chunks[i * 2 + 1]
-    new_a, new_b, new_c, new_d = states[a], states[b], states[c], states[d]
-    new_a = (new_a + new_b + mx).realize()
-    new_d = rotr(new_d ^ new_a, 16)
-    new_c = (new_c + new_d)
-    new_b = rotr(new_b ^ new_c, 12)
-    new_a = (new_a + new_b + my)
-    new_d = rotr(new_d ^ new_a, 8)
-    new_c = (new_c + new_d)
-    new_b = rotr(new_b ^ new_c, 7)
-    states[a] = new_a
-    states[b] = new_b
-    states[c] = new_c
-    states[d] = new_d
+    for m in (mx, my):
+      states[a] = states[a] + states[b] + m
+      states[d] = rotr(states[d] ^ states[a], 16 if m is mx else 8)
+      states[c] = states[c] + states[d]
+      states[b] = rotr(states[b] ^ states[c], 12 if m is mx else 7)
   return states
 
 def compress_chunks(states: Tensor, chunks: Tensor, chain_vals: Tensor, n_end_blocks: int):
@@ -94,3 +86,14 @@ def blake3(tensor: Tensor) -> str:
     chain_vals = compress(chain_vals, tree_compressor, None, None, None, i == tree_levels - 1, True)
     if leftover_chain_val is not None: chain_vals = chain_vals.cat(leftover_chain_val, dim=0)
   return chain_vals[:, 0].flatten().bitcast(dtypes.uint8).data().tobytes()[:32].hex()
+
+
+if __name__ == "__main__":
+  data = 1024 * 1024 * 1000
+  input = Tensor.full((data,), fill_value=0x41, dtype=dtypes.uint8)
+  import time
+  start = time.monotonic()
+  result = blake3(input)
+  duration = time.monotonic() - start
+  print(f"Hashed {data/1024/1024:.1f}MB in {duration:.3f}s ({data/duration/1024/1024:.1f}MB/s)")
+  print(f"Hash: {result}")
