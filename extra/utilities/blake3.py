@@ -10,8 +10,8 @@ class BLAKE3:
   def __init__(self, std_sizes: Optional[List[int]] = None):
     self.IV = Tensor([0x6A09E667, 0xBB67AE85, 0x3C6EF372, 0xA54FF53A, 0x510E527F, 0x9B05688C, 0x1F83D9AB, 0x5BE0CD19], dtype=dtypes.uint32)
     self.std_sizes = std_sizes or [1024**3]
+    self.mix = jit.TinyJit(self.mix)
 
-  @jit.TinyJit
   def mix(self, states: Tensor, chunks: Tensor) -> Tensor:
     def rotr(x: Tensor, n: int) -> Tensor: return ((x << (32 - n)) | (x >> n))
     for i, (a,b,c,d) in enumerate([(0,4,8,12), (1,5,9,13), (2,6,10,14), (3,7,11,15), (0,5,10,15), (1,6,11,12), (2,7,8,13), (3,4,9,14)]):
