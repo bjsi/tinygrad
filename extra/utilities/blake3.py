@@ -119,15 +119,17 @@ if __name__ == "__main__":
       print(f"\nBenchmarking {size_bytes / 1024 / 1024 :.1f} MB...")
       randint = random.randint(0, 255)
       data = Tensor.full(size_bytes // 2, fill_value=randint, dtype=dtypes.float16)
-      print(f"Padding time: {end - start:.2f}s")
-      size = data.numel() * data.element_size()
+      input_size = data.nbytes()
+      #data = data.pad(((0, (1024**3 - data.nbytes()) // data.element_size(),),), value=0)
+      padded_size = data.numel() * data.element_size()
+      print(f"Padded size: {padded_size / 1024 / 1024 :.1f} MB")
 
       start = time.time()
       BLAKE3().hash(data)
       end = time.time()
 
       elapsed = end - start
-      throughput = size / elapsed / 1e6  # MB/s
+      throughput = input_size / elapsed / 1e6  # MB/s
       print(f"Time: {elapsed:.2f}s")
       print(f"Throughput: {throughput:.1f} MB/s")
 
