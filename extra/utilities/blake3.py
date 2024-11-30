@@ -9,9 +9,9 @@ from tinygrad.tensor import Tensor
 class BLAKE3:
   def __init__(self, std_sizes: Optional[List[int]] = None):
     self.IV = Tensor([0x6A09E667, 0xBB67AE85, 0x3C6EF372, 0xA54FF53A, 0x510E527F, 0x9B05688C, 0x1F83D9AB, 0x5BE0CD19], dtype=dtypes.uint32)
-    self.std_sizes = std_sizes or [512 * (1024**2), 1024**3, 2 * (1024**3)]
-    self.mix = jit.TinyJit(self.mix)
+    self.std_sizes = std_sizes or [1024**3]
 
+  @jit.TinyJit
   def mix(self, states: Tensor, chunks: Tensor) -> Tensor:
     def rotr(x: Tensor, n: int) -> Tensor: return ((x << (32 - n)) | (x >> n))
     for i, (a,b,c,d) in enumerate([(0,4,8,12), (1,5,9,13), (2,6,10,14), (3,7,11,15), (0,5,10,15), (1,6,11,12), (2,7,8,13), (3,4,9,14)]):
@@ -101,7 +101,6 @@ class BLAKE3:
 
 if __name__ == "__main__":
   import time
-  import sys
   import random
 
   # warmup the JIT
@@ -127,6 +126,8 @@ if __name__ == "__main__":
     print(f"Throughput: {throughput:.1f} MB/s")
 
   for size in BLAKE3().std_sizes:
-    randint = random.randint(0, 1024 * 1024 * 20)
-    size = int(size) - randint
-    benchmark_size(size)
+    for _ in range(10):
+      print(f"round {_}")
+      randint = random.randint(0, 1024 * 1024 * 20)
+      size = int(size) - randint
+      benchmark_size(size)
