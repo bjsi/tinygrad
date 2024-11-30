@@ -117,7 +117,8 @@ if __name__ == "__main__":
   else:
     def benchmark_size(size_bytes):
       print(f"\nBenchmarking {size_bytes / 1024 / 1024 :.1f} MB...")
-      data = Tensor.rand(size_bytes // 2, dtype=dtypes.float16)
+      randint = random.randint(0, 255)
+      data = Tensor.full(size_bytes, fill_value=randint, dtype=dtypes.uint8)
       size = data.numel() * data.element_size()
 
       start = time.time()
