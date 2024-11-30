@@ -101,33 +101,36 @@ class BLAKE3:
 
 if __name__ == "__main__":
   import time
+  import sys
   import random
 
-  # warmup the JIT
-  print("\nWarming up...")
-  def warmup(size):
-    print(f"Warming up {size / 1024 / 1024 :.1f} MB...")
-    warmup_data = Tensor.rand(size // 2, dtype=dtypes.float16)
-    BLAKE3().hash(warmup_data)
-  for size in BLAKE3().std_sizes: warmup(size)
+  arg = sys.argv[1]
 
-  def benchmark_size(size_bytes):
-    print(f"\nBenchmarking {size_bytes / 1024 / 1024 :.1f} MB...")
-    data = Tensor.rand(size_bytes // 2, dtype=dtypes.float16)
-    size = data.numel() * data.element_size()
+  if arg == "warmup":
+    # warmup the JIT
+    print("\nWarming up...")
+    def warmup(size):
+      print(f"Warming up {size / 1024 / 1024 :.1f} MB...")
+      warmup_data = Tensor.rand(size // 2, dtype=dtypes.float16)
+      BLAKE3().hash(warmup_data)
+    for size in BLAKE3().std_sizes: warmup(size)
+  else:
+    def benchmark_size(size_bytes):
+      print(f"\nBenchmarking {size_bytes / 1024 / 1024 :.1f} MB...")
+      data = Tensor.rand(size_bytes // 2, dtype=dtypes.float16)
+      size = data.numel() * data.element_size()
 
-    start = time.time()
-    BLAKE3().hash(data)
-    end = time.time()
+      start = time.time()
+      BLAKE3().hash(data)
+      end = time.time()
 
-    elapsed = end - start
-    throughput = size / elapsed / 1e6  # MB/s
-    print(f"Time: {elapsed:.2f}s")
-    print(f"Throughput: {throughput:.1f} MB/s")
+      elapsed = end - start
+      throughput = size / elapsed / 1e6  # MB/s
+      print(f"Time: {elapsed:.2f}s")
+      print(f"Throughput: {throughput:.1f} MB/s")
 
-  for size in BLAKE3().std_sizes:
-    for _ in range(10):
-      print(f"round {_}")
-      randint = random.randint(0, 1024 * 1024 * 20)
-      size = int(size) - randint
-      benchmark_size(size)
+    size_mb = float(sys.argv[1])
+    randint = random.randint(0, 1024 * 1024 * 20)
+    size = int(size_mb * 1024 * 1024) - randint
+
+    benchmark_size(size)
