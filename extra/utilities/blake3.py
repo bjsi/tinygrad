@@ -1,6 +1,5 @@
 import math
 from typing import Dict, List, Optional, Tuple
-from tinygrad.device import Device
 from tinygrad.dtype import dtypes
 from tinygrad.engine import jit
 from tinygrad.helpers import ceildiv
@@ -40,11 +39,12 @@ class BLAKE3:
     return states
 
   def tensor_to_blake_data(self, tensor: Tensor) -> Tuple[Tensor, int, int]:
-    data = tensor.flatten().bitcast(dtypes.uint8)
-    pad_amt = min(size for size in self.std_sizes if size >= tensor.nbytes()) - tensor.nbytes()
-    data = data.pad(((0, pad_amt),), value=0).bitcast(dtypes.uint32).reshape(-1, 16, 16).permute(1, 2, 0).contiguous()
+    size = min(size for size in self.std_sizes if size >= tensor.nbytes()) // tensor.element_size()
+    data = tensor.flatten().pad(((0, size - tensor.shape[0],),), value=0)
+    data = data.bitcast(dtypes.uint32).reshape(-1, 16, 16).permute(1, 2, 0).contiguous()
     final_chunk_len = 0 if tensor.nbytes() == 0 else (tensor.nbytes() % 1024 or 1024)
-    n_end_blocks, end_block_len = ceildiv(final_chunk_len, 64) or 1, 0 if tensor.nbytes() == 0 else tensor.nbytes() % 64 or 64
+    n_end_blocks = ceildiv(final_chunk_len, 64) or 1
+    end_block_len = 0 if tensor.nbytes() == 0 else tensor.nbytes() % 64 or 64
     n_chunks = max(1, ceildiv(tensor.nbytes(), 1024))
     return data, {"n_end_blocks": n_end_blocks, "end_block_len": end_block_len, "n_chunks": n_chunks}
 
@@ -118,7 +118,8 @@ if __name__ == "__main__":
     def benchmark_size(size_bytes):
       print(f"\nBenchmarking {size_bytes / 1024 / 1024 :.1f} MB...")
       randint = random.randint(0, 255)
-      data = Tensor.full(size_bytes, fill_value=randint, dtype=dtypes.uint8)
+      data = Tensor.full(size_bytes // 2, fill_value=randint, dtype=dtypes.float16)
+      print(f"Padding time: {end - start:.2f}s")
       size = data.numel() * data.element_size()
 
       start = time.time()
