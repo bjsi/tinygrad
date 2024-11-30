@@ -40,7 +40,7 @@ class BLAKE3:
 
   def tensor_to_blake_data(self, tensor: Tensor) -> Tuple[Tensor, int, int]:
     size = min(size for size in self.std_sizes if size >= tensor.nbytes()) // tensor.element_size()
-    data = tensor.flatten().pad(((0, size - tensor.shape[0],),), value=0)
+    data = tensor.pad(((0, size - tensor.shape[0],),), value=0) # TODO: flatten()
     data = data.bitcast(dtypes.uint32).reshape(-1, 16, 16).permute(1, 2, 0).contiguous()
     final_chunk_len = 0 if tensor.nbytes() == 0 else (tensor.nbytes() % 1024 or 1024)
     n_end_blocks = ceildiv(final_chunk_len, 64) or 1
@@ -120,7 +120,7 @@ if __name__ == "__main__":
       randint = random.randint(0, 255)
       data = Tensor.full(size_bytes // 2, fill_value=randint, dtype=dtypes.float16)
       input_size = data.nbytes()
-      data = data.pad(((0, (1024**3 - data.nbytes()) // data.element_size(),),), value=0)
+      # data = data.pad(((0, (1024**3 - data.nbytes()) // data.element_size(),),), value=0)
       padded_size = data.numel() * data.element_size()
       print(f"Padded size: {padded_size / 1024 / 1024 :.1f} MB")
 
