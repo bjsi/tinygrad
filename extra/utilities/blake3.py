@@ -9,7 +9,7 @@ from tinygrad.tensor import Tensor
 class BLAKE3:
   def __init__(self, std_sizes: Optional[List[int]] = None):
     self.IV = Tensor([0x6A09E667, 0xBB67AE85, 0x3C6EF372, 0xA54FF53A, 0x510E527F, 0x9B05688C, 0x1F83D9AB, 0x5BE0CD19], dtype=dtypes.uint32)
-    self.std_sizes = std_sizes or [1024 * (1024**2)] #, 1024**3, 2 * (1024**3), 4 * (1024**3)] # size rounding for JIT consistency
+    self.std_sizes = std_sizes or [512 * (1024**2), 1024**3, 2 * (1024**3)]
 
   @jit.TinyJit
   def mix(self, states: Tensor, chunks: Tensor) -> Tensor:
@@ -102,6 +102,7 @@ class BLAKE3:
 if __name__ == "__main__":
   import time
   import sys
+  import random
 
   arg = sys.argv[1]
 
@@ -128,7 +129,9 @@ if __name__ == "__main__":
       print(f"Time: {elapsed:.2f}s")
       print(f"Throughput: {throughput:.1f} MB/s")
 
+    for size in BLAKE3().std_sizes:
     size_mb = float(sys.argv[1])
-    size = int(size_mb * 1024 * 1024)
+    randint = random.randint(0, 1024 * 1024 * 20)
+    size = int(size_mb * 1024 * 1024) - randint
 
     benchmark_size(size)
