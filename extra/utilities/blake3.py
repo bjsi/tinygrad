@@ -104,8 +104,6 @@ if __name__ == "__main__":
   import sys
   import random
 
-  arg = sys.argv[1]
-
   # warmup the JIT
   print("\nWarming up...")
   def warmup(size):
@@ -129,7 +127,6 @@ if __name__ == "__main__":
     print(f"Throughput: {throughput:.1f} MB/s")
 
   for size in BLAKE3().std_sizes:
-    size_mb = float(sys.argv[1])
     randint = random.randint(0, 1024 * 1024 * 20)
-    size = int(size_mb * 1024 * 1024) - randint
+    size = int(size) - randint
     benchmark_size(size)
