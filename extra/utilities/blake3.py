@@ -120,7 +120,7 @@ if __name__ == "__main__":
       randint = random.randint(0, 255)
       data = Tensor.full(size_bytes // 2, fill_value=randint, dtype=dtypes.float16)
       input_size = data.nbytes()
-      #data = data.pad(((0, (1024**3 - data.nbytes()) // data.element_size(),),), value=0)
+      data = data.pad(((0, (1024**3 - data.nbytes()) // data.element_size(),),), value=0)
       padded_size = data.numel() * data.element_size()
       print(f"Padded size: {padded_size / 1024 / 1024 :.1f} MB")
 
