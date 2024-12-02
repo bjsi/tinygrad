@@ -25,12 +25,6 @@ class BLAKE3:
   @jit.TinyJit
   def permute_data(self, data: Tensor) -> Tensor: return data[self.PERMS].realize()
 
-  @jit.TinyJit
-  def finalize_state(self, states: Tensor, chain_vals: Tensor) -> Tensor:
-    states[:8] = states[:8] ^ states[8:]
-    states[8:] = chain_vals[:8] ^ states[8:]
-    return states
-
   def compress_chunks(self, states: Tensor, data: Tensor, chain_vals: Tensor, info: Tensor) -> Tensor:
     for i in range(16): # parallel over chunks, sequential over blocks
       self.compress_blocks(states[i].contiguous(), data[i].contiguous(), chain_vals[i].contiguous())
@@ -44,7 +38,8 @@ class BLAKE3:
       self.mix(states, data)
       data = self.permute_data(data).clone().realize()
     self.mix(states, data)
-    self.finalize_state(states, chain_vals)
+    states[:8] = states[:8] ^ states[8:]
+    states[8:] = chain_vals[:8] ^ states[8:]
     return states
 
   def tensor_to_blake_data(self, tensor: Tensor) -> Tuple[Tensor, Tensor]:
