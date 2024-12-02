@@ -94,7 +94,7 @@ class BLAKE3:
     chain_vals = self.compress(data, self.compress_chunks, counts, info, parents, final_step)
     info = (info < self.DEFAULT_LEN).where(64, info)
     counts, parents = Tensor.zeros((16, 1, data.shape[-1]), dtype=dtypes.uint32), Tensor.ones((1,), dtype=dtypes.bool)
-    final_step = False
+    final_step = chain_vals.any(0).sum(-1) == 2
     for _ in range(n_steps): # tree-hash chain value pairs ~halving them in each step
       chain_vals, leftover_chain_val = self.pairwise_concat(chain_vals)
       valid = chain_vals.any(0)
