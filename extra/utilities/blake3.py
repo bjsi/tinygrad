@@ -8,7 +8,7 @@ from tinygrad.tensor import Tensor
 class BLAKE3:
   def __init__(self, std_sizes: Optional[List[int]] = None):
     self.IV = Tensor([0x6A09E667, 0xBB67AE85, 0x3C6EF372, 0xA54FF53A, 0x510E527F, 0x9B05688C, 0x1F83D9AB, 0x5BE0CD19], dtype=dtypes.uint32)
-    self.std_sizes = std_sizes or [1024**2 * 1000]
+    self.std_sizes = std_sizes or [1024**3 * 2]
     self.PAD, self.DEFAULT_LEN, self.PERM = 66, 65, Tensor([2, 6, 3, 10, 7, 0, 4, 13, 1, 11, 12, 5, 9, 14, 15, 8], dtype=dtypes.uint32)
 
   @jit.TinyJit
