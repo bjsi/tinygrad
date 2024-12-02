@@ -35,7 +35,7 @@ class BLAKE3:
       self.mix(states, data)
       data = data[self.PERM]
     self.mix(states, data)
-    states[:] = states[:8] ^ states[8:]
+    states[:8] = states[:8] ^ states[8:]
     states[8:] = chain_vals[:8] ^ states[8:]
     return states
 
