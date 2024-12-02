@@ -1,15 +1,15 @@
 import math
-from typing import Callable, List, Optional, Tuple
+from typing import Callable, Optional, Tuple
 from tinygrad.dtype import dtypes
 from tinygrad.engine import jit
 from tinygrad.helpers import ceildiv
 from tinygrad.tensor import Tensor
 
 class BLAKE3:
-  def __init__(self, std_sizes: Optional[List[int]] = None):
+  def __init__(self, max_memory: Optional[int] = None):
     self.IV = Tensor([0x6A09E667, 0xBB67AE85, 0x3C6EF372, 0xA54FF53A, 0x510E527F, 0x9B05688C, 0x1F83D9AB, 0x5BE0CD19], dtype=dtypes.uint32)
-    self.std_sizes = std_sizes or [1024**3 * 3]
-    self.PAD, self.DEFAULT_LEN, self.PERM = 66, 65, Tensor([2, 6, 3, 10, 7, 0, 4, 13, 1, 11, 12, 5, 9, 14, 15, 8], dtype=dtypes.uint32)
+    self.max_memory = max_memory or 1024**3 * 3
+    self.PAD, self.DEFAULT_LEN, self.PERMS = 66, 65, Tensor([2, 6, 3, 10, 7, 0, 4, 13, 1, 11, 12, 5, 9, 14, 15, 8], dtype=dtypes.uint32)
 
   @jit.TinyJit
   def mix(self, states: Tensor, chunks: Tensor) -> Tensor:
@@ -22,6 +22,15 @@ class BLAKE3:
         states[c] = states[c] + states[d]
         states[b] = rotr(states[b] ^ states[c], 12 if m is mx else 7)
 
+  @jit.TinyJit
+  def permute_data(self, data: Tensor) -> Tensor: return data[self.PERMS].realize()
+
+  @jit.TinyJit
+  def finalize_state(self, states: Tensor, chain_vals: Tensor) -> Tensor:
+    states[:8] = states[:8] ^ states[8:]
+    states[8:] = chain_vals[:8] ^ states[8:]
+    return states
+
   def compress_chunks(self, states: Tensor, data: Tensor, chain_vals: Tensor, info: Tensor) -> Tensor:
     for i in range(16): # parallel over chunks, sequential over blocks
       self.compress_blocks(states[i].contiguous(), data[i].contiguous(), chain_vals[i].contiguous())
@@ -33,14 +42,13 @@ class BLAKE3:
   def compress_blocks(self, states: Tensor, data: Tensor, chain_vals: Tensor) -> Tensor:
     for _ in range(6):
       self.mix(states, data)
-      data = data[self.PERM]
+      data = self.permute_data(data).clone().realize()
     self.mix(states, data)
-    states[:8] = states[:8] ^ states[8:]
-    states[8:] = chain_vals[:8] ^ states[8:]
+    self.finalize_state(states, chain_vals)
     return states
 
   def tensor_to_blake_data(self, tensor: Tensor) -> Tuple[Tensor, Tensor]:
-    size = min(size for size in self.std_sizes if size >= tensor.nbytes()) // tensor.element_size()
+    size = self.max_memory // tensor.element_size()
     data = tensor.flatten().pad(((0, size - tensor.shape[0],),), value=0)
     data = data.bitcast(dtypes.uint32).reshape(-1, 16, 16).permute(1, 2, 0).contiguous()
     final_chunk_len = 0 if tensor.nbytes() == 0 else (tensor.nbytes() % 1024 or 1024)
@@ -52,6 +60,7 @@ class BLAKE3:
     n_steps = math.ceil(math.log2(max(n_chunks, 1)))
     return data.contiguous(), info.contiguous(), n_steps
 
+  @jit.TinyJit
   def pairwise_concat(self, chain_vals: Tensor) -> Tuple[Tensor, Tensor]:
     paired_cvs_with_leftover = chain_vals.permute(1, 0).reshape(-1, 16).transpose()
     paired = chain_vals.any(0).reshape(-1, 2)
@@ -129,7 +138,7 @@ if __name__ == "__main__":
       print(f"Warming up {size / 1024 / 1024 :.1f} MB...")
       warmup_data = Tensor.rand(size // 2, dtype=dtypes.float16)
       BLAKE3().hash(warmup_data)
-    for size in BLAKE3().std_sizes: warmup(size)
+    for size in BLAKE3().max_memory: warmup(size)
   else:
     def benchmark_size(size_bytes):
       print(f"\nBenchmarking {size_bytes / 1024 / 1024 :.1f} MB...")
