@@ -35,7 +35,7 @@ class BLAKE3:
       self.mix(states, data)
       data = data[self.PERM]
     self.mix(states, data)
-    states[:8] = states[:8] ^ states[8:]
+    states[:] = states[:8] ^ states[8:]
     states[8:] = chain_vals[:8] ^ states[8:]
     return states
 
@@ -86,7 +86,7 @@ class BLAKE3:
 
   def compress_tree(self, states, data, iv, _): return self.compress_blocks(states[-1].contiguous(), data, iv[0])
 
-  def _hash(self, data: Tensor, info: Tensor) -> Tensor:
+  def _hash(self, data: Tensor, info: Tensor, n_steps: int) -> Tensor:
     parents = Tensor.zeros((16, 1, data.shape[-1]), dtype=dtypes.bool).contiguous()
     final_step = Tensor.zeros((16, 1, data.shape[-1]), dtype=dtypes.bool).contiguous()
     counts = Tensor.arange(0, data.shape[-1], dtype=dtypes.uint32).reshape(-1, 1).expand(-1, 16).reshape(-1, 16, 1).permute(1, 2, 0)
@@ -95,10 +95,9 @@ class BLAKE3:
     counts = Tensor.zeros((16, 1, data.shape[-1]), dtype=dtypes.uint32)
     parents = Tensor.ones((16, 1, data.shape[-1]), dtype=dtypes.bool)
     final_step = chain_vals.any(0).sum(-1) == 2
-    tree_steps = math.ceil(math.log2(max(data.shape[-1], 1)))
-    results = Tensor.zeros((tree_steps + 1, 8), dtype=dtypes.uint32).contiguous()
+    results = Tensor.zeros((n_steps + 1, 8), dtype=dtypes.uint32).contiguous()
     results[0] = chain_vals[:, 0]
-    for i in range(tree_steps): # tree-hash chain value pairs ~halving them in each step
+    for i in range(n_steps): # tree-hash chain value pairs ~halving them in each step
       chain_vals, leftover_chain_val = self.pairwise_concat(chain_vals)
       valid = chain_vals.any(0)
       chain_vals = self.compress(chain_vals.contiguous(), self.compress_tree, counts, info, parents, final_step)[:8] * valid
@@ -111,7 +110,7 @@ class BLAKE3:
 
   def hash(self, tensor: Tensor) -> str:
     data, info, n_steps = self.tensor_to_blake_data(tensor)
-    results = self._hash(data, info)
+    results = self._hash(data, info, n_steps)
     return results[n_steps].flatten().bitcast(dtypes.uint8).data().tobytes().hex()
 
 if __name__ == "__main__":
