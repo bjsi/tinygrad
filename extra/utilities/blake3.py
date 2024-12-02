@@ -8,7 +8,7 @@ from tinygrad.tensor import Tensor
 class BLAKE3:
   def __init__(self, max_memory: Optional[int] = None):
     self.IV = Tensor([0x6A09E667, 0xBB67AE85, 0x3C6EF372, 0xA54FF53A, 0x510E527F, 0x9B05688C, 0x1F83D9AB, 0x5BE0CD19], dtype=dtypes.uint32)
-    self.max_memory = max_memory or 1024**3 * 3
+    self.max_memory = max_memory or 1024**3 * 1
     self.PAD, self.DEFAULT_LEN, self.PERMS = 66, 65, Tensor([2, 6, 3, 10, 7, 0, 4, 13, 1, 11, 12, 5, 9, 14, 15, 8], dtype=dtypes.uint32)
 
   @jit.TinyJit
@@ -23,7 +23,7 @@ class BLAKE3:
         states[b] = rotr(states[b] ^ states[c], 12 if m is mx else 7)
 
   @jit.TinyJit
-  def permute_data(self, data: Tensor) -> Tensor: return data[self.PERMS].realize()
+  def permute_data(self, data: Tensor) -> Tensor: data[:] = data[self.PERMS]
 
   def compress_chunks(self, states: Tensor, data: Tensor, chain_vals: Tensor, info: Tensor) -> Tensor:
     for i in range(16): # parallel over chunks, sequential over blocks
@@ -36,7 +36,7 @@ class BLAKE3:
   def compress_blocks(self, states: Tensor, data: Tensor, chain_vals: Tensor) -> Tensor:
     for _ in range(6):
       self.mix(states, data)
-      data = self.permute_data(data).clone().realize()
+      self.permute_data(data)
     self.mix(states, data)
     states[:8] = states[:8] ^ states[8:]
     states[8:] = chain_vals[:8] ^ states[8:]
@@ -59,10 +59,9 @@ class BLAKE3:
   def pairwise_concat(self, chain_vals: Tensor) -> Tuple[Tensor, Tensor]:
     paired_cvs_with_leftover = chain_vals.permute(1, 0).reshape(-1, 16).transpose()
     paired = chain_vals.any(0).reshape(-1, 2)
-    paired_mask = (paired[:, 0] * paired[:, 1])
-    leftover_mask = (paired[:, 0] ^ paired[:, 1])
+    paired_mask, leftover_mask = (paired[:, 0] * paired[:, 1]), (paired[:, 0] ^ paired[:, 1])
     paired_cvs = (paired_cvs_with_leftover * paired_mask).pad(((0, 0), (0, paired.shape[0])), value=0)
-    leftover = (paired_cvs_with_leftover * leftover_mask).sum(1)[:8].reshape(-1, 1)
+    leftover = (paired_cvs_with_leftover * leftover_mask).max(1)[:8].reshape(-1, 1)
     return paired_cvs, leftover
 
   def create_state(self, iv: Tensor, counts: Tensor, info: Tensor, flags: Tensor) -> Tensor:
@@ -77,85 +76,73 @@ class BLAKE3:
     flags = (flags + 2 * ((flags != 2) * (info < self.DEFAULT_LEN))) # chunk end flag for partial final chunk
     flags[0] = flags[0] + 1 # chunk start flag
     flags = parents.where(4, flags) # parent flag
-    flags = (flags + (8 * (((info < self.PAD).sum() <= 16) * (info < self.DEFAULT_LEN)))) # root flag if <= 1 chunk
-    flags = final_step.where(12, flags) # final step flag
-    flags = flags * (info < self.PAD)
+    flags = (flags + (8 * (((info < self.PAD).sum() <= 16) * (info < self.DEFAULT_LEN)))) # add root flag if <= 1 chunk
+    flags = final_step.where(12, flags) * (info < self.PAD) # add final step flag and zero out padding
     return flags.cast(dtypes.uint32)
 
   def compress(self, data: Tensor, compressor: Callable, counts: Tensor, info: Tensor, parents: Tensor, final_step: Tensor) -> Tensor:
     iv = self.IV.reshape(1, 8, 1).expand(16, 8, info.shape[-1]).contiguous()
-    flags = self.create_flags(info, parents, final_step)
-    states = self.create_state(iv, counts, info, flags)
+    states = self.create_state(iv, counts, info, self.create_flags(info, parents, final_step))
     return compressor(states, data, iv, info)
 
   def compress_tree(self, states, data, iv, _): return self.compress_blocks(states[-1].contiguous(), data, iv[0])
 
-  def _hash(self, data: Tensor, info: Tensor) -> Tensor:
-    parents = Tensor.zeros((16, 1, data.shape[-1]), dtype=dtypes.bool).contiguous()
-    final_step = Tensor.zeros((16, 1, data.shape[-1]), dtype=dtypes.bool).contiguous()
+  def hash(self, tensor: Tensor) -> str:
+    data, info, n_steps = self.tensor_to_blake_data(tensor)
+    parents = final_step = Tensor.zeros((1,), dtype=dtypes.bool).contiguous()
     counts = Tensor.arange(0, data.shape[-1], dtype=dtypes.uint32).reshape(-1, 1).expand(-1, 16).reshape(-1, 16, 1).permute(1, 2, 0)
     chain_vals = self.compress(data, self.compress_chunks, counts, info, parents, final_step)
     info = (info < self.DEFAULT_LEN).where(64, info)
-    counts = Tensor.zeros((16, 1, data.shape[-1]), dtype=dtypes.uint32)
-    parents = Tensor.ones((16, 1, data.shape[-1]), dtype=dtypes.bool)
-    final_step = chain_vals.any(0).sum(-1) == 2
-    n_steps = math.ceil(math.log2(max(data.shape[-1], 1)))
-    results = Tensor.zeros((n_steps + 1, 8), dtype=dtypes.uint32).contiguous()
-    results[0] = chain_vals[:, 0]
-    for i in range(n_steps): # tree-hash chain value pairs ~halving them in each step
+    counts, parents = Tensor.zeros((16, 1, data.shape[-1]), dtype=dtypes.uint32), Tensor.ones((1,), dtype=dtypes.bool)
+    final_step = False
+    for _ in range(n_steps): # tree-hash chain value pairs ~halving them in each step
       chain_vals, leftover_chain_val = self.pairwise_concat(chain_vals)
       valid = chain_vals.any(0)
       chain_vals = self.compress(chain_vals.contiguous(), self.compress_tree, counts, info, parents, final_step)[:8] * valid
-      results[i + 1] = chain_vals[:, 0]
       insertion_mask = (valid ^ valid.roll(1, -1))
       insertion_mask[0] = 0
       chain_vals = insertion_mask.where(leftover_chain_val, chain_vals)
       final_step = chain_vals.any(0).sum(-1) == 2
-    return results.realize()
-
-  def hash(self, tensor: Tensor) -> str:
-    data, info, n_steps = self.tensor_to_blake_data(tensor)
-    results = self._hash(data, info)
-    return results[n_steps].flatten().bitcast(dtypes.uint8).data().tobytes().hex()
+    return chain_vals[:, 0].flatten().bitcast(dtypes.uint8).data().tobytes().hex()
 
 if __name__ == "__main__":
-  # t = Tensor.full((1024 ** 2) * 500, fill_value=1, dtype=dtypes.uint8)
-  # print(BLAKE3().hash(t))
-  import time
-  import sys
-  import random
+  t = Tensor.full((1024 ** 2) * 500, fill_value=1, dtype=dtypes.uint8)
+  print(BLAKE3().hash(t))
+  # import time
+  # import sys
+  # import random
 
-  arg = sys.argv[1]
+  # arg = sys.argv[1]
 
-  if arg == "warmup":
-    # warmup the JIT
-    print("\nWarming up...")
-    def warmup(size):
-      print(f"Warming up {size / 1024 / 1024 :.1f} MB...")
-      warmup_data = Tensor.rand(size // 2, dtype=dtypes.float16)
-      BLAKE3().hash(warmup_data)
-    warmup(BLAKE3().max_memory)
-  else:
-    def benchmark_size(size_bytes):
-      print(f"\nBenchmarking {size_bytes / 1024 / 1024 :.1f} MB...")
-      randint = random.randint(0, 255)
-      data = Tensor.full(size_bytes // 2, fill_value=randint, dtype=dtypes.float16)
-      input_size = data.nbytes()
-      # data = data.pad(((0, (1024**3 - data.nbytes()) // data.element_size(),),), value=0)
-      padded_size = data.numel() * data.element_size()
-      print(f"Padded size: {padded_size / 1024 / 1024 :.1f} MB")
+  # if arg == "warmup":
+  #   # warmup the JIT
+  #   print("\nWarming up...")
+  #   def warmup(size):
+  #     print(f"Warming up {size / 1024 / 1024 :.1f} MB...")
+  #     warmup_data = Tensor.rand(size // 2, dtype=dtypes.float16)
+  #     BLAKE3().hash(warmup_data)
+  #   warmup(BLAKE3().max_memory)
+  # else:
+  #   def benchmark_size(size_bytes):
+  #     print(f"\nBenchmarking {size_bytes / 1024 / 1024 :.1f} MB...")
+  #     randint = random.randint(0, 255)
+  #     data = Tensor.full(size_bytes // 2, fill_value=randint, dtype=dtypes.float16)
+  #     input_size = data.nbytes()
+  #     # data = data.pad(((0, (1024**3 - data.nbytes()) // data.element_size(),),), value=0)
+  #     padded_size = data.numel() * data.element_size()
+  #     print(f"Padded size: {padded_size / 1024 / 1024 :.1f} MB")
 
-      start = time.time()
-      BLAKE3().hash(data)
-      end = time.time()
+  #     start = time.time()
+  #     BLAKE3().hash(data)
+  #     end = time.time()
 
-      elapsed = end - start
-      throughput = input_size / elapsed / 1e6  # MB/s
-      print(f"Time: {elapsed:.2f}s")
-      print(f"Throughput: {throughput:.1f} MB/s")
+  #     elapsed = end - start
+  #     throughput = input_size / elapsed / 1e6  # MB/s
+  #     print(f"Time: {elapsed:.2f}s")
+  #     print(f"Throughput: {throughput:.1f} MB/s")
 
-    size_mb = float(sys.argv[1])
-    randint = random.randint(0, 1024 * 1024 * 20)
-    size = int(size_mb * 1024 * 1024) - randint
+  #   size_mb = float(sys.argv[1])
+  #   randint = random.randint(0, 1024 * 1024 * 20)
+  #   size = int(size_mb * 1024 * 1024) - randint
 
-    benchmark_size(size)
+  #   benchmark_size(size)
