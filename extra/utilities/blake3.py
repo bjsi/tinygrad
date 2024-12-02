@@ -106,43 +106,41 @@ class BLAKE3:
     return chain_vals[:, 0].flatten().bitcast(dtypes.uint8).data().tobytes().hex()
 
 if __name__ == "__main__":
-  t = Tensor.full((1024 ** 2) * 500, fill_value=1, dtype=dtypes.uint8)
-  print(BLAKE3().hash(t))
-  # import time
-  # import sys
-  # import random
+  import time
+  import sys
+  import random
 
-  # arg = sys.argv[1]
+  arg = sys.argv[1]
 
-  # if arg == "warmup":
-  #   # warmup the JIT
-  #   print("\nWarming up...")
-  #   def warmup(size):
-  #     print(f"Warming up {size / 1024 / 1024 :.1f} MB...")
-  #     warmup_data = Tensor.rand(size // 2, dtype=dtypes.float16)
-  #     BLAKE3().hash(warmup_data)
-  #   warmup(BLAKE3().max_memory)
-  # else:
-  #   def benchmark_size(size_bytes):
-  #     print(f"\nBenchmarking {size_bytes / 1024 / 1024 :.1f} MB...")
-  #     randint = random.randint(0, 255)
-  #     data = Tensor.full(size_bytes // 2, fill_value=randint, dtype=dtypes.float16)
-  #     input_size = data.nbytes()
-  #     # data = data.pad(((0, (1024**3 - data.nbytes()) // data.element_size(),),), value=0)
-  #     padded_size = data.numel() * data.element_size()
-  #     print(f"Padded size: {padded_size / 1024 / 1024 :.1f} MB")
+  if arg == "warmup":
+    # warmup the JIT
+    print("\nWarming up...")
+    def warmup(size):
+      print(f"Warming up {size / 1024 / 1024 :.1f} MB...")
+      warmup_data = Tensor.rand(size // 2, dtype=dtypes.float16)
+      BLAKE3().hash(warmup_data)
+    warmup(BLAKE3().max_memory)
+  else:
+    def benchmark_size(size_bytes):
+      print(f"\nBenchmarking {size_bytes / 1024 / 1024 :.1f} MB...")
+      randint = random.randint(0, 255)
+      data = Tensor.full(size_bytes // 2, fill_value=randint, dtype=dtypes.float16)
+      input_size = data.nbytes()
+      # data = data.pad(((0, (1024**3 - data.nbytes()) // data.element_size(),),), value=0)
+      padded_size = data.numel() * data.element_size()
+      print(f"Padded size: {padded_size / 1024 / 1024 :.1f} MB")
 
-  #     start = time.time()
-  #     BLAKE3().hash(data)
-  #     end = time.time()
+      start = time.time()
+      BLAKE3().hash(data)
+      end = time.time()
 
-  #     elapsed = end - start
-  #     throughput = input_size / elapsed / 1e6  # MB/s
-  #     print(f"Time: {elapsed:.2f}s")
-  #     print(f"Throughput: {throughput:.1f} MB/s")
+      elapsed = end - start
+      throughput = input_size / elapsed / 1e6  # MB/s
+      print(f"Time: {elapsed:.2f}s")
+      print(f"Throughput: {throughput:.1f} MB/s")
 
-  #   size_mb = float(sys.argv[1])
-  #   randint = random.randint(0, 1024 * 1024 * 20)
-  #   size = int(size_mb * 1024 * 1024) - randint
+    size_mb = float(sys.argv[1])
+    randint = random.randint(0, 1024 * 1024 * 20)
+    size = int(size_mb * 1024 * 1024) - randint
 
-  #   benchmark_size(size)
+    benchmark_size(size)
