@@ -10,6 +10,8 @@ from tinygrad.tensor import Tensor
 class BLAKE3:
   IV = Tensor([0x6A09E667, 0xBB67AE85, 0x3C6EF372, 0xA54FF53A, 0x510E527F, 0x9B05688C, 0x1F83D9AB, 0x5BE0CD19], dtype=dtypes.uint32)
   PAD, DEFAULT_LEN, PERMUTATIONS = 66, 65, Tensor([2, 6, 3, 10, 7, 0, 4, 13, 1, 11, 12, 5, 9, 14, 15, 8], dtype=dtypes.uint32)
+  def __init__(self):
+    self.compress_chunks = TinyJit(self.compress_blocks)
 
   def compress_blocks(self, states: Tensor, data: Tensor, chain_vals: Tensor) -> Tensor:
     for i in range(7):
@@ -36,11 +38,12 @@ class BLAKE3:
     states = (chain_vals.cat(chain_vals[:, :4], counts, lengths, flags, dim=1) * (info < self.PAD).cast(dtypes.uint32))
     for i in range(16):
       next_state = states[i] if i == 0 else states[i-1, :8].cat(states[i, 8:])
-      states[i] = self.compress_blocks(next_state, data[i], chain_vals[i])
+      states[i] = self.compress_chunks(next_state, data[i], chain_vals[i])
     states = states * (info < self.PAD)
     end_block = (states * (info < self.DEFAULT_LEN)).sum(0)
     return (states[-1, :] | end_block)[:8].realize()
 
+  @TinyJit
   def tree_hash(self, chain_vals: Tensor, n_tree_steps: Variable) -> Tensor:
     for _ in range(n_tree_steps.val):
       stacked = chain_vals.transpose().reshape(-1, 16).transpose().reshape(2, 8, -1)
@@ -68,16 +71,11 @@ class BLAKE3:
     info[n_end_blocks:, :, n_chunks - 1:] = info[:, :, n_chunks:] = self.PAD
     n_steps = Variable(min_val=0, max_val=math.log2(max_memory), name="n_steps").bind(math.ceil(math.log2(max(n_chunks, 1))))
     return data, info, n_steps
-  
-  @TinyJit
-  def _hash(self, data: Tensor, info: Tensor, n_tree_steps: Variable) -> Tensor:
-    chain_vals = self.init_chain_vals(data, info)
-    chain_vals = self.tree_hash(chain_vals, n_tree_steps)
-    return chain_vals
 
   def hash(self, tensor: Tensor, max_memory: int = 1024**3) -> str:
     data, info, n_tree_steps = self.tensor_to_blake_input(tensor, max_memory)
-    chain_vals = self._hash(data, info, n_tree_steps)
+    chain_vals = self.init_chain_vals(data, info)
+    chain_vals = self.tree_hash(chain_vals, n_tree_steps)
     return chain_vals[:, 0].flatten().bitcast(dtypes.uint8).data().tobytes().hex()
 
 if __name__ == "__main__":
