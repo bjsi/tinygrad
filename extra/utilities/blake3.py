@@ -82,7 +82,7 @@ if __name__ == "__main__":
   import sys
 
   arg = sys.argv[1]
-  max_memory = 2 ** math.ceil(math.log2(1024**3))
+  max_memory = 2 ** math.ceil(math.log2(1024**2 * 500))
   print(f"Using max_memory: {max_memory / 1024 / 1024:.1f} MB")
 
   if arg == "warmup":
