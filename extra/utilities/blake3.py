@@ -25,7 +25,8 @@ class BLAKE3:
       if i < 6: data = data[self.PERMUTATIONS]
     return (states[:8] ^ states[8:]).cat(chain_vals[:8] ^ states[8:]).realize()
 
-  def init_chain_vals(self, data: Tensor, info: Tensor) -> Tuple[Tensor, Tensor]:
+  @TinyJit
+  def init_states(self, data: Tensor, info: Tensor) -> Tensor:
     chain_vals = self.IV.reshape(1, 8, 1).expand(16, 8, info.shape[-1]).contiguous()
     counts = Tensor.arange(0, data.shape[-1], dtype=dtypes.uint32).reshape(-1, 1).expand(-1, 16).reshape(-1, 16, 1).permute(1, 2, 0)
     counts = counts.cat(Tensor.zeros(chain_vals.shape[0], 1, chain_vals.shape[-1], dtype=dtypes.uint32), dim=1)
@@ -36,12 +37,20 @@ class BLAKE3:
     flags[0] = flags[0] + 1 # chunk start flag
     flags = (flags + (8 * (((info < self.PAD).sum() <= 16) * (info < self.DEFAULT_LEN)))).cast(dtypes.uint32) # root flag
     states = (chain_vals.cat(chain_vals[:, :4], counts, lengths, flags, dim=1) * (info < self.PAD).cast(dtypes.uint32))
-    for i in range(16):
-      next_state = states[i] if i == 0 else states[i-1, :8].cat(states[i, 8:])
-      states[i] = self.compress_chunks(next_state.contiguous(), data[i].contiguous(), chain_vals[i].contiguous())
+    return states, chain_vals
+
+  @TinyJit
+  def finalize_states(self, states: Tensor, info: Tensor) -> Tensor:
     states = states * (info < self.PAD)
     end_block = (states * (info < self.DEFAULT_LEN)).sum(0)
     return (states[-1, :] | end_block)[:8].realize()
+
+  def init_chain_vals(self, data: Tensor, info: Tensor) -> Tuple[Tensor, Tensor]:
+    states, chain_vals = self.init_states(data, info)
+    for i in range(16):
+      next_state = states[i] if i == 0 else states[i-1, :8].cat(states[i, 8:])
+      states[i] = self.compress_chunks(next_state.contiguous(), data[i].contiguous(), chain_vals[i].contiguous())
+    return self.finalize_states(states, info)
 
   @TinyJit
   def tree_hash(self, chain_vals: Tensor, n_tree_steps: Variable) -> Tensor:
