@@ -71,7 +71,7 @@ class BLAKE3:
   def tree_hash(self, chain_vals: Tensor, n_tree_steps: Variable) -> Tensor:
     for _ in range(n_tree_steps.val):
       chain_vals = self.tree_step(chain_vals.contiguous())
-    return chain_vals.realize()
+    return chain_vals
 
   def tensor_to_blake_input(self, tensor: Tensor, max_memory: int) -> Tuple[Tensor, Tensor, Variable]:
     assert max_memory % 1024 == 0 and max_memory & (max_memory - 1) == 0, "max_memory must be a power of two divisible by 1024"
@@ -97,7 +97,7 @@ if __name__ == "__main__":
   import sys
 
   arg = sys.argv[1]
-  max_memory = 2 ** math.ceil(math.log2(1024**2 * 500))
+  max_memory = 2 ** math.ceil(math.log2(1024**3 * 2))
   print(f"Using max_memory: {max_memory / 1024 / 1024:.1f} MB")
 
   if arg == "warmup":
