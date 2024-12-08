@@ -38,7 +38,7 @@ class BLAKE3:
     states = (chain_vals.cat(chain_vals[:, :4], counts, lengths, flags, dim=1) * (info < self.PAD).cast(dtypes.uint32))
     for i in range(16):
       next_state = states[i] if i == 0 else states[i-1, :8].cat(states[i, 8:])
-      states[i] = self.compress_chunks(next_state, data[i], chain_vals[i])
+      states[i] = self.compress_chunks(next_state.contiguous(), data[i].contiguous(), chain_vals[i].contiguous())
     states = states * (info < self.PAD)
     end_block = (states * (info < self.DEFAULT_LEN)).sum(0)
     return (states[-1, :] | end_block)[:8].realize()
