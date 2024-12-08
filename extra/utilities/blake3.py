@@ -10,6 +10,7 @@ from tinygrad.tensor import Tensor
 class BLAKE3:
   IV = Tensor([0x6A09E667, 0xBB67AE85, 0x3C6EF372, 0xA54FF53A, 0x510E527F, 0x9B05688C, 0x1F83D9AB, 0x5BE0CD19], dtype=dtypes.uint32)
   PAD, DEFAULT_LEN, PERMUTATIONS = 66, 65, Tensor([2, 6, 3, 10, 7, 0, 4, 13, 1, 11, 12, 5, 9, 14, 15, 8], dtype=dtypes.uint32)
+
   def __init__(self):
     self.compress_chunks = TinyJit(self.compress_blocks)
 
@@ -52,25 +53,25 @@ class BLAKE3:
       states[i] = self.compress_chunks(next_state.contiguous(), data[i].contiguous(), chain_vals[i].contiguous())
     return self.finalize_states(states, info)
 
-  @TinyJit
   def tree_step(self, chain_vals: Tensor) -> Tensor:
-      stacked = chain_vals.transpose().reshape(-1, 16).transpose().reshape(2, 8, -1)
-      stacked_mask = stacked.any(1)
-      final_step = (stacked_mask.sum() <= 2)
-      pair_mask, remainder_mask = (stacked_mask[0] * stacked_mask[1]), (stacked_mask[0] ^ stacked_mask[1])
-      paired, remainder = (stacked * pair_mask).reshape(16, -1), (stacked * remainder_mask).reshape(16, -1)[:8]
-      flags = final_step.where(12, Tensor.full((1, paired.shape[-1]), 4, dtype=dtypes.uint32))
-      iv = self.IV.reshape(8, 1).expand(8, paired.shape[-1])
-      counts = Tensor.zeros((2, paired.shape[-1]), dtype=dtypes.uint32)
-      lengths = Tensor.full((1, paired.shape[-1]), 64, dtype=dtypes.uint32)
-      states = iv.cat(iv[:4], counts, lengths, flags, dim=0)
-      chain_vals = ((self.compress_blocks(states, paired, iv) * pair_mask)[:8] + remainder).realize()
-      chain_vals = chain_vals.pad((None, (0, chain_vals.shape[-1])))
-      return chain_vals.realize()
+    stacked = chain_vals.transpose().reshape(-1, 16).transpose().reshape(2, 8, -1)
+    stacked_mask = stacked.any(1)
+    final_step = (stacked_mask.sum() <= 2)
+    pair_mask, remainder_mask = (stacked_mask[0] * stacked_mask[1]), (stacked_mask[0] ^ stacked_mask[1])
+    paired, remainder = (stacked * pair_mask).reshape(16, -1), (stacked * remainder_mask).reshape(16, -1)[:8]
+    flags = final_step.where(12, Tensor.full((1, paired.shape[-1]), 4, dtype=dtypes.uint32))
+    iv = self.IV.reshape(8, 1).expand(8, paired.shape[-1])
+    counts = Tensor.zeros((2, paired.shape[-1]), dtype=dtypes.uint32)
+    lengths = Tensor.full((1, paired.shape[-1]), 64, dtype=dtypes.uint32)
+    states = iv.cat(iv[:4], counts, lengths, flags, dim=0)
+    chain_vals = ((self.compress_blocks(states, paired, iv) * pair_mask)[:8] + remainder).realize()
+    chain_vals = chain_vals.pad((None, (0, chain_vals.shape[-1])))
+    return chain_vals
 
+  @TinyJit
   def tree_hash(self, chain_vals: Tensor, n_tree_steps: Variable) -> Tensor:
     for _ in range(n_tree_steps.val):
-      chain_vals = self.tree_step(chain_vals.contiguous())
+      chain_vals = self.tree_step(chain_vals)
     return chain_vals
 
   def tensor_to_blake_input(self, tensor: Tensor, max_memory: int) -> Tuple[Tensor, Tensor, Variable]:
