@@ -53,8 +53,7 @@ class BLAKE3:
     return self.finalize_states(states, info)
 
   @TinyJit
-  def tree_hash(self, chain_vals: Tensor, n_tree_steps: Variable) -> Tensor:
-    for _ in range(n_tree_steps.val):
+  def tree_step(self, chain_vals: Tensor) -> Tensor:
       stacked = chain_vals.transpose().reshape(-1, 16).transpose().reshape(2, 8, -1)
       stacked_mask = stacked.any(1)
       final_step = (stacked_mask.sum() <= 2)
@@ -66,6 +65,12 @@ class BLAKE3:
       lengths = Tensor.full((1, paired.shape[-1]), 64, dtype=dtypes.uint32)
       states = iv.cat(iv[:4], counts, lengths, flags, dim=0)
       chain_vals = ((self.compress_blocks(states, paired, iv) * pair_mask)[:8] + remainder).realize()
+      chain_vals = chain_vals.pad((None, (0, chain_vals.shape[-1])))
+      return chain_vals.realize()
+
+  def tree_hash(self, chain_vals: Tensor, n_tree_steps: Variable) -> Tensor:
+    for _ in range(n_tree_steps.val):
+      chain_vals = self.tree_step(chain_vals.contiguous())
     return chain_vals.realize()
 
   def tensor_to_blake_input(self, tensor: Tensor, max_memory: int) -> Tuple[Tensor, Tensor, Variable]:
